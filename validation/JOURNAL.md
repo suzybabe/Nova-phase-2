@@ -612,6 +612,30 @@ The technical audit passed, and there was no evidence strong enough to justify c
 
 No submission changes were made as part of these experiments.
 
+## Experiment 8: Repeated-click choice (most frequent vs most recent)
+
+### Objective
+
+Darling's re-click rule picks the user's **most recently** clicked live item within 12 hours. We checked whether picking the **most frequently** clicked item in that window would change any recommendations.
+
+### Method
+
+On the Round 1 prediction requests, using the released feedback only, we found every request with at least one eligible re-click item (clicked by the same user in the previous 12 hours and available at the request time), then compared "most recent" with "most frequent".
+
+### Results
+
+| Measure | Count |
+|---|---|
+| Requests with a re-click override | 1,173 |
+| Requests with 2 or more distinct eligible items | 200 |
+| Requests where "most frequent" picks a different item than "most recent" | 0 |
+
+No user clicked the same item twice within 12 hours, so every eligible item has exactly one click and "most frequent" always ends in a tie, which recency then decides.
+
+### Decision
+
+Keep "most recent wins". Changing the rule would give identical recommendations in Round 1. Re-check in Round 2, when more history may contain repeated clicks.
+
 ## Summary of Lea's work
 
 | Experiment | Result | Decision |
