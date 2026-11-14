@@ -4,8 +4,8 @@ import numpy as np
 from pathlib import Path
 
 # Resolve paths relative to solution.py
-BASE_DIR = Path(__file__).resolve().parent
-MODELS_DIR = BASE_DIR / "models"
+HERE = Path(__file__).resolve().parent
+MODELS_DIR = HERE / "models"
 
 
 def load_artifacts():
@@ -22,58 +22,42 @@ def load_artifacts():
     return artifacts
 
 
-def predict_batch(batch_df: pd.DataFrame, catalog_df: pd.DataFrame, artifacts: dict) -> list:
+def predict(data_dir, batch_size):
     """
-    Generates one valid (rowid, itemID) tuple per row in batch_df.
-    Strictly enforces the [valid_from, valid_to) availability window.
+    Main entry point called by the evaluation harness.
+    Must be a generator yielding batches of (rowid, itemID) tuples.
     """
-    rowids = batch_df["rowid"].to_numpy()
-    timestamps = batch_df["timestamp"].to_numpy()
-    user_ids = batch_df["user_id"].to_numpy()
+    data = Path(data_dir)
+    rows = pd.read_csv(data / "x_pred.csv", dtype=str)
+    catalog = pd.read_csv(data / "catalog.csv", dtype=str)
+    
+    # Ensure proper numeric typing for timestamps and availability windows
+    rows["timestamp"] = pd.to_numeric(rows["timestamp"], errors="coerce")
+    catalog["valid_from"] = pd.to_numeric(catalog["valid_from"], errors="coerce")
+    catalog["valid_to"] = pd.to_numeric(catalog["valid_to"], errors="coerce")
 
-    cat_items = catalog_df["itemID"].to_numpy()
-    cat_from = catalog_df["valid_from"].to_numpy()
-    cat_to = catalog_df["valid_to"].to_numpy()
+    cat_items = catalog["itemID"].to_numpy()
+    cat_from = catalog["valid_from"].to_numpy()
+    cat_to = catalog["valid_to"].to_numpy()
 
-    # Pre-sort catalogue by popularity if available
-    if artifacts["popularity"] is not None:
-        pop_map = dict(zip(artifacts["popularity"]["itemID"], artifacts["popularity"]["score"]))
-        scores = np.array([pop_map.get(iid, 0.0) for iid in cat_items])
-        order = np.argsort(-scores)
-        cat_items = cat_items[order]
-        cat_from = cat_from[order]
-        cat_to = cat_to[order]
+    default_item = cat_items[0] if len(cat_items) > 0 else "itm_default"
 
-    predictions = []
-
-    for rowid, uid, ts in zip(rowids, user_ids, timestamps):
-        # Filter catalogue to items strictly valid at this timestamp: [valid_from, valid_to)
-        valid_mask = (cat_from <= ts) & (ts < cat_to)
-        valid_items = cat_items[valid_mask]
-
-        if len(valid_items) == 0:
-            chosen_item = int(cat_items[0])
-        else:
-            # Baseline: pick highest-ranked valid item (cold-start safe)
-            chosen_item = int(valid_items[0])
-
-        predictions.append((int(rowid), chosen_item))
-
-    return predictions
-
-
-def predict(data_dir: str, batch_size: int = 256):
-    """
-    Required platform generator signature.
-    Reads x_pred.csv and catalog.csv from read-only data_dir and yields batches immediately.
-    """
-    data_path = Path(data_dir)
-    x_pred_path = data_path / "x_pred.csv"
-    catalog_path = data_path / "catalog.csv"
-
-    catalog_df = pd.read_csv(catalog_path)
     artifacts = load_artifacts()
 
-    # Stream x_pred.csv in chunks so first batches persist immediately
-    for chunk_df in pd.read_csv(x_pred_path, chunksize=batch_size):
-        yield predict_batch(chunk_df, catalog_df, artifacts)
+    # Process rows in chunks according to batch_size and yield iteratively
+    for first in range(0, len(rows), batch_size):
+        part = rows.iloc[first:first + batch_size]
+        batch = []
+        for rowid, timestamp in zip(part["rowid"], part["timestamp"]):
+            # Strictly enforce the [valid_from, valid_to) availability window[cite: 2, 6]
+            valid_mask = (cat_from <= timestamp) & (timestamp < cat_to)
+            valid_items = cat_items[valid_mask]
+
+            if len(valid_items) > 0:
+                chosen_item = valid_items[0]
+            else:
+                chosen_item = default_item
+
+            batch.append((str(rowid), str(chosen_item)))
+        
+        yield batch
