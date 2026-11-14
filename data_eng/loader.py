@@ -36,7 +36,7 @@ def load_config(data_dir):
 
 def default_data_dir():
     # VM path first, then my Mac's Downloads copy
-    vm = os.path.expanduser("~/data/round-1/input")
+    vm = os.path.expanduser("~/data/round-1/phase-2-round-1-input")
     mac = os.path.expanduser("~/Downloads/phase-2-round-1-input")
     if os.path.exists(vm):
         return vm
