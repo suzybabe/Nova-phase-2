@@ -60,3 +60,37 @@ It feeds the final presentation (25% of judging): approach, what changed across 
 - Biggest single improvement: __ (round __)
 - What didn't work and why: __
 - Limitations: offline hit@1 is an approximation of the real pooled-slate score; __
+## Round 1 – data released 11:30 · deadline ~15:30
+**Data facts:** 99,998 events (6–8 Jan) · slate size 3 · 25% clicked · 5,000 users (~20 events each) · 19% new users in x_pred · 7,819 items
+**Validation split:** --days 1 → train 6–7 Jan (66,503 events), test 8 Jan (33,495 events, 4,983 with a click), 0 new users in test
+**Finding:** strong user fatigue: click rate 50% (first slates) → 13% (15th–20th slate); daily click rate 39% → 21% → 15%
+
+| Model | Settings | hit@1 | MRR | Decision |
+|---|---|---|---|---|
+| Random | – | 0.3430 | 0.6168 | floor |
+| ClickCount | – | 0.4413 | 0.6781 | organisers' example |
+| **SmoothedCTR** | half_life=1, prior=100 | **0.5252** | **0.7362** | **best → submitted** |
+| CF item-item + CTR | w=10 / 30 / 100 | 0.5218 / 0.5248 / 0.5252 | – | converges to SmoothedCTR; CF covers ~15% of pairs |
+| CF ALS + CTR | w=1 / 10 | 0.4096 / 0.5073 | – | worse |
+| NovaRanker v1 (Lea) | – | failed | – | -inf scores (catalogue window outside history) |
+| NovaRanker v2 (Lea, LightGBM) | default | 0.5071 | 0.7238 | below baseline; fit 86 s |
+| SmoothedCTR fine-tune | half_life 0.25/0.5/1 × prior 100/300/1000 | best 0.5254 (hl=1, p=300) | – | flat: hl=1 optimal, prior insensitive → keep hl=1, p=100 |
+| ChoiceLogit (clicked events only) | dim 0/4, reg 1/5, hl=1 | 0.4889–0.5045 | – | worse: ignoring no-click events loses information |
+| COEC (fatigue-adjusted CTR) | half_life 1/3 × prior 2/5/20 | best 0.5248 (hl=1, p=5) | 0.7359 | ties SmoothedCTR → not used |
+
+**Submission fix:** submit branch was picking the first catalogue item → replaced with SmoothedCTR; removed requirements.txt; environment.txt = torch.
+**What we learned:** recency + strong smoothing of item CTR is the best signal so far. Personalisation (CF) and the feature ranker don't help yet with 3 days of data.
+
+**Diagnostics:** data is clean (no duplicates, missing values or invalid clicks). Item freshness has no effect on which item is picked (choice rate flat at 0.333). User fatigue is strong (click rate 50% → 13%).
+
+### Round 1 decision (agreed with Lea)
+- **Submitted: SmoothedCTR (half_life=1, prior=100)**, hit@1 0.5252 / MRR 0.7362, fit < 1 s.
+- Rejected: CF (converges to SmoothedCTR), ALS (worse), LightGBM ranker (0.5071, 86 s fit), ChoiceLogit (0.5045), COEC (tie).
+- Submission fixes: solution.py now uses SmoothedCTR (was first catalogue item); requirements.txt removed.
+- Note: a 582-line combined solution (CF + LightGBM) is on main, not validated; not used in Round 1.
+
+### Plan for Rounds 2–4
+1. Re-run validation on each round's data (the released results include the real pooled slates).
+2. Minimal ranker: smoothed CTR + user fatigue first; add features one at a time; keep only those that raise hit@1.
+3. Validate the combined solution before any submission.
+4. Compare the official round score with the offline hit@1.
