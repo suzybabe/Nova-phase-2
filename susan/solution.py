@@ -1,4 +1,4 @@
-"""Team Nova - Phase 2 submission (v4: sequence-aware choice model).
+"""Team Nova - Phase 2 submission (v5: sequence-aware choice model, serving-matched).
 
 Score = P(our item is chosen | the user clicks on the pooled slate of all teams' items).
 v4 treats each user's interactions as a SEQUENCE and learns, from real pooled slates,
@@ -9,6 +9,10 @@ which item a user picks:
     impressions since the last click, hours since last shown (fatigue / recovery)
   - sequence transitions: last clicked item -> next item
   - global appeal (Darling's MNL + smoothed CTR)
+v5 (robustness, checked on 6 chronological splits): train only on pooled-slate days
+(days whose average slate has > 3.5 items, i.e. real multi-team slates) and compute features
+at the end of the history ("clock at end") so serving features look like training features
+even when requests are days after the history.
 Candidates per request: every item the user interacted with + top global + transition items,
 all LIVE at the request time. Conditional logit picks the best. Falls back to v3 rules on error.
 Only numpy/pandas/scipy.
@@ -34,6 +38,9 @@ SEQ_CANDIDATES = "all"   # "all" = interacted + global + transitions ; "clicked"
 N_GLOBAL = 50            # global candidates per request (seq model)
 N_TRANS = 10             # transition candidates per request (seq model)
 L2 = 1.0                 # L2 on the choice-model weights
+POOLED_ONLY = True       # v5: train the choice model on pooled-slate days only
+POOLED_MIN_SLATE = 3.5   # a day counts as pooled if its average slate has more items than this
+CLOCK_AT_END = True      # v5: compute time features at the end of the history, not at the request
 MIN_CHOOSER_EVENTS = 300  # below this the learned chooser falls back to "recent"
 SKIP_REJECTED = True     # global fallback skips items the user saw and never clicked
 
@@ -381,7 +388,7 @@ def pred_frame(rows, cands, st, u, tend):
     df = cands.merge(rows[["rowid", "user_id", "timestamp"]], on="rowid")
     df = df.merge(st, on=["user_id", "itemID"], how="left")
     df = df.join(u, on="user_id")
-    df["t"] = df["timestamp"]
+    df["t"] = float(tend) if CLOCK_AT_END else df["timestamp"]   # live check always uses df["timestamp"]
     gap = (df["t"].to_numpy(float) - tend)
     for name, h in HALF.items():
         df[name] = df[name].fillna(0) * np.exp(-np.maximum(gap, 0) / h)
@@ -389,10 +396,30 @@ def pred_frame(rows, cands, st, u, tend):
 
 
 
+def pooled_start(fb):
+    """Start of the first pooled-slate day (avg slate size > POOLED_MIN_SLATE), or None."""
+    e = fb.groupby("event_id").agg(t=("timestamp", "first"), n=("itemID", "size"))
+    e["day"] = e["t"] // DAY
+    d = e.groupby("day").agg(n=("n", "mean"), k=("n", "size"))
+    pooled = d[d["n"] > POOLED_MIN_SLATE]
+    return int(pooled.index.min() * DAY) if len(pooled) else None
+
+
+def train_set(fb, trans):
+    tr, loo = train_rows(fb, trans)
+    if POOLED_ONLY:
+        p = pooled_start(fb)
+        if p is not None:
+            keep = (tr["t"] >= p).to_numpy()
+            if tr.loc[keep, "event_id"].nunique() >= MIN_CHOOSER_EVENTS:
+                tr, loo = tr[keep], loo[keep]
+    return tr, loo
+
+
 def seq_picks(fb, rows, cat, appeal):
     """rowid -> best live item according to the sequence-aware choice model."""
     trans = transitions(fb)
-    tr, loo = train_rows(fb, trans)
+    tr, loo = train_set(fb, trans)
     ev, _ = pd.factorize(tr["event_id"])
     print(f"seq model training: {len(tr)} slate rows, {ev.max() + 1} events")
     if ev.max() + 1 < MIN_CHOOSER_EVENTS:
@@ -420,7 +447,7 @@ def seq_picks(fb, rows, cat, appeal):
         cand = pd.concat(parts).drop_duplicates()
         df = pred_frame(r, cand, st, u, tend)
         vf, vt = df["itemID"].map(live["valid_from"]), df["itemID"].map(live["valid_to"])
-        df = df[vf.notna() & (vf <= df["t"]) & (df["t"] < vt)]
+        df = df[vf.notna() & (vf <= df["timestamp"]) & (df["timestamp"] < vt)]
         if df.empty:
             continue
         df = df.assign(s=((features(df, appeal, trans) - mu) / sd) @ w)
