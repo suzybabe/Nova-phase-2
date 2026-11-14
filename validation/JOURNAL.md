@@ -60,3 +60,20 @@ It feeds the final presentation (25% of judging): approach, what changed across 
 - Biggest single improvement: __ (round __)
 - What didn't work and why: __
 - Limitations: offline hit@1 is an approximation of the real pooled-slate score; __
+## Round 1 – data released 11:30 · deadline ~15:30
+**Data facts:** 99,998 events (6–8 Jan) · slate size 3 · 25% clicked · 5,000 users (~20 events each) · 19% new users in x_pred · 7,819 items
+**Validation split:** --days 1 → train 6–7 Jan (66,503 events), test 8 Jan (33,495 events, 4,983 with a click), 0 new users in test
+**Finding:** strong user fatigue: click rate 50% (first slates) → 13% (15th–20th slate); daily click rate 39% → 21% → 15%
+
+| Model | Settings | hit@1 | MRR | Decision |
+|---|---|---|---|---|
+| Random | – | 0.3430 | 0.6168 | floor |
+| ClickCount | – | 0.4413 | 0.6781 | organisers' example |
+| **SmoothedCTR** | half_life=1, prior=100 | **0.5252** | **0.7362** | **best → submitted** |
+| CF item-item + CTR | w=10 / 30 / 100 | 0.5218 / 0.5248 / 0.5252 | – | converges to SmoothedCTR; CF covers ~15% of pairs |
+| CF ALS + CTR | w=1 / 10 | 0.4096 / 0.5073 | – | worse |
+| NovaRanker v1 (Lea) | – | failed | – | -inf scores (catalogue window outside history) |
+| NovaRanker v2 (Lea, LightGBM) | default | 0.5071 | 0.7238 | below baseline; fit 86 s |
+
+**Submission fix:** submit branch was picking the first catalogue item → replaced with SmoothedCTR; removed requirements.txt; environment.txt = torch.
+**What we learned:** recency + strong smoothing of item CTR is the best signal so far. Personalisation (CF) and the feature ranker don't help yet with 3 days of data.
