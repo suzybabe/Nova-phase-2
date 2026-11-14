@@ -1,0 +1,13 @@
+*.pem
+*.key
+*.zip
+data/
+__pycache__/
+data/
+*.zip
+*.parquet
+*.csv
+*.jsonl
+__pycache__/
+features_out/
+.DS_Store
