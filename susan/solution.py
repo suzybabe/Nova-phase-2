@@ -34,7 +34,7 @@ DAY = 86400
 
 RECLICK_HOURS = None     # None = no time limit on previously clicked items
 PERSONAL_RANK = "seq"     # "seq" (v4) | "learned" | "recent" | "appeal" | "count_recent"
-SEQ_CANDIDATES = "all"   # "all" = interacted + global + transitions ; "clicked" = previously clicked only
+SEQ_CANDIDATES = "clicked"   # v5.1: choose among previously clicked live items; global fallback otherwise
 N_GLOBAL = 50            # global candidates per request (seq model)
 N_TRANS = 10             # transition candidates per request (seq model)
 L2 = 1.0                 # L2 on the choice-model weights
