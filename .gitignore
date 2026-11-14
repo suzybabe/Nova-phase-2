@@ -1,5 +1,8 @@
 *.pem
 *.key
+*.zip
+data/
+__pycache__/
 data/
 *.zip
 *.parquet
