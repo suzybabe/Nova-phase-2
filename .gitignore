@@ -7,3 +7,4 @@ data/
 *.jsonl
 __pycache__/
 features_out/
+.DS_Store
