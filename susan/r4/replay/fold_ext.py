@@ -1,0 +1,48 @@
+import sys, numpy as np, pandas as pd
+from scipy.optimize import minimize
+sys.path.insert(0, "/home/user/susan_r4/nu"); import scorer as nu
+D4 = "/home/user/data/round-4/phase-2-round-4-input"; CAT3 = "/home/user/data/round-3/phase-2-round-3-input/catalog.csv"
+fl = pd.read_parquet(D4 + "/feedback_long.parquet").astype({"event_id": str, "user_id": str, "itemID": str})
+fl["timestamp"] = fl.timestamp.astype(np.int64); fl["clicked"] = fl.clicked.astype(int)
+cat = pd.read_csv(CAT3, dtype={"itemID": str}).drop_duplicates("itemID")
+vf = cat.set_index("itemID").valid_from; vt = cat.set_index("itemID").valid_to
+ev = fl.groupby("event_id").agg(n=("itemID", "size"), t=("timestamp", "first")); dsz = ev.groupby(ev.t // 86400).n.mean()
+pdays = set(dsz[dsz < 2.8].index); fl["pooled"] = (fl.timestamp // 86400).isin(pdays)
+days = sorted((fl.timestamp // 86400).unique())
+def stats(R, H):
+    m = R[["key", "user_id", "itemID", "t"]].merge(H[["user_id", "itemID", "timestamp", "clicked", "pooled"]], on=["user_id", "itemID"])
+    m = m[m.timestamp < m.t]; c = m[m.clicked == 1]
+    a = c.groupby("key").agg(n=("timestamp", "size"), last=("timestamp", "max"), first=("timestamp", "min"), npool=("pooled", "sum"))
+    s = m[m.clicked == 0].groupby("key").size().rename("seen")
+    out = R.set_index("key").join(a).join(s); out["seen"] = out.seen.fillna(0); return out[out.n.fillna(0) > 0].reset_index()
+def F(df, ap, apr, ext):
+    hrs = (df.t - df["last"]) / 3600; f = [ap.reindex(df.itemID).fillna(0).to_numpy(), np.log1p(df.n), np.log1p(hrs.clip(lower=0)), (hrs < 12).astype(float)]
+    if ext: f += [apr.reindex(df.itemID).fillna(0).to_numpy(), np.log1p(df.npool), np.log1p(((df.t - df["first"]) / 3600).clip(lower=0)), np.log1p(df.seen)]
+    return np.column_stack(f)
+def fit(X, e, y):
+    def loss(w):
+        u = X @ w; u = u - u.max(); ex = np.exp(u); den = np.bincount(e, weights=ex)
+        return -(y * u).sum() + np.log(den).sum() + 0.01 * w @ w, -(X * y[:, None]).sum(0) + (X * (ex / den[e])[:, None]).sum(0) + 0.02 * w
+    return minimize(loss, np.zeros(X.shape[1]), jac=True, method="L-BFGS-B").x
+for name, cd, ed in [("FOLD 1 (test 12-13 Jan)", days[-2], days[-1] + 1), ("FOLD 2 (test 11 Jan)", days[-3], days[-3] + 1)]:
+    tr = fl[fl.timestamp < cd * 86400]; te = fl[(fl.timestamp >= cd * 86400) & (fl.timestamp < ed * 86400)]
+    tclk = te[te.clicked == 1].drop_duplicates("event_id").set_index("event_id").itemID
+    slate = te[te.event_id.isin(tclk.index)].groupby("event_id").itemID.apply(set)
+    req = te.drop_duplicates("event_id").set_index("event_id").loc[tclk.index, ["user_id", "timestamp"]]
+    s1 = nu.Scorer(w_knn=0, w_reclick=0).fit(tr, cat); ap = pd.Series(s1.ap_all, index=s1.items)
+    s2 = nu.Scorer(w_knn=0, w_reclick=0).fit(tr[~tr.pooled], cat); apr = pd.Series(s2.ap_all, index=s2.items)
+    P = tr[tr.pooled & tr.event_id.isin(tr.loc[tr.pooled & (tr.clicked == 1), "event_id"])]
+    TR = P[["event_id", "user_id", "itemID", "timestamp", "clicked"]].rename(columns={"timestamp": "t", "clicked": "y"}).reset_index(drop=True)
+    TR["key"] = np.arange(len(TR)); TR = stats(TR, tr); TR = TR[TR.groupby("event_id").y.transform("sum") == 1]
+    e = pd.factorize(TR.event_id)[0]; y = TR.y.to_numpy(float)
+    c = tr[tr.clicked == 1][["user_id", "itemID"]].drop_duplicates()
+    TE = req.reset_index().merge(c, on="user_id").rename(columns={"timestamp": "t"})
+    TE = TE[(TE.itemID.map(vf) <= TE.t) & (TE.t < TE.itemID.map(vt))].reset_index(drop=True); TE["key"] = np.arange(len(TE)); TE = stats(TE, tr)
+    o = ap.sort_values(ascending=False).index[:500]; ovf, ovt = vf.reindex(o).to_numpy(), vt.reindex(o).to_numpy(); t = req.timestamp.to_numpy()[:, None]
+    gpick = pd.Series(o[((ovf[None, :] <= t) & (t < ovt[None, :])).argmax(1)], index=req.index)
+    print(f"\n{name}: training slates {e.max()+1:,} | test clicked slates {len(tclk):,}", flush=True)
+    for lab, ext in [("BASE (= v5 features)", False), ("EXT (+4 features)", True)]:
+        w = fit(F(TR, ap, apr, ext), e, y); u = F(TE, ap, apr, ext) @ w
+        best = TE.assign(u=u).sort_values("u", ascending=False).drop_duplicates("event_id").set_index("event_id").itemID
+        p = gpick.copy(); p.update(best); inS = np.array([p[k] in slate[k] for k in p.index]); cc = tclk[inS]
+        print(f"  {lab:<22} w={np.round(w, 2)} | pick in slate {inS.mean():6.1%} | SCORE {100*(p[cc.index].to_numpy()==cc.to_numpy()).mean():6.2f}", flush=True)
