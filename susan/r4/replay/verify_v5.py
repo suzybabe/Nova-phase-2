@@ -1,6 +1,6 @@
 import sys, os, shutil, importlib.util, numpy as np, pandas as pd
 D4 = "/home/user/data/round-4/phase-2-round-4-input"; CAT3 = "/home/user/data/round-3/phase-2-round-3-input/catalog.csv"
-MODELS = {"Ady R4": "/home/user/ady_r4/ady_r4", "Nova User (was submitted)": "/home/user/susan_r4/nu", "v5 (submitted now)": "/home/user/susan_r4/v5"}
+MODELS = {"v5 (submitted now)": "/home/user/susan_r4/v5", "v5f (fatigue 0.1)": "/home/user/susan_r4/v5f"}
 fl = pd.read_parquet(D4 + "/feedback_long.parquet").astype({"event_id": str, "user_id": str, "itemID": str})
 fl["timestamp"] = fl.timestamp.astype(np.int64); fl["clicked"] = fl.clicked.astype(int)
 days = sorted((fl.timestamp // 86400).unique())
@@ -23,7 +23,7 @@ for name, cut_day, end_day in [("FOLD 1 (test 12-13 Jan)", days[-2], days[-1] + 
         P[tag] = pd.Series(dict(x for b in mod.predict(F) for x in b)).reindex(tclk.index)
         inS = np.array([p in slate[r] for r, p in P[tag].items()]); c = tclk[inS]
         print(f"  {tag:<28} pick in slate {inS.mean():6.1%} | SCORE {100*(P[tag][c.index].to_numpy()==c.to_numpy()).mean():6.2f}", flush=True)
-    a, b = P["Nova User (was submitted)"], P["v5 (submitted now)"]
+    a, b = P["v5 (submitted now)"], P["v5f (fatigue 0.1)"]
     both = np.array([x in slate[r] and y in slate[r] for r, x, y in zip(a.index, a, b)]); diff = both & (a.to_numpy() != b.to_numpy())
     wa = (a.to_numpy()[diff] == tclk.to_numpy()[diff]).sum(); wb = (b.to_numpy()[diff] == tclk.to_numpy()[diff]).sum()
     print(f"  PAIRED (both picks in slate, picks differ: {diff.sum():,} slates): user chose Nova User's pick {wa:,} times vs v5's pick {wb:,} times")
